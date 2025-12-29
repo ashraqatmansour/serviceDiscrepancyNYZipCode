@@ -1,51 +1,89 @@
-from bokeh.models import ColumnDataSource, Select
-from bokeh.plotting import figure, curdoc
+#!/usr/bin/env python3
+from pathlib import Path
+from bokeh.io import curdoc
 from bokeh.layouts import column
-import pickle
+from bokeh.models import ColumnDataSource, Select, Legend, LegendItem
+from bokeh.plotting import figure
+from bokeh.core.properties import value
+import csv
+from datetime import datetime
 
-# Load preprocessed data
-with open("../Bokeh/monthly_avg.pkl", "rb") as f:
-    avg_times = pickle.load(f)
+BASE = Path(__file__).resolve().parent
+ALL_PATH = BASE / "monthly_all_averages.csv"
+ZIP_PATH = BASE / "monthly_zip_averages.csv"
 
-# Get sorted list of months
-months = sorted(avg_times["ALL"].keys())
+def m2dt(month_str):
+    return datetime.strptime(month_str + "-01", "%Y-%m-%d")
 
-# Default zipcodes
-zip1 = list(avg_times.keys())[0]
-zip2 = list(avg_times.keys())[1]
+# Load overall data
+def load_all(path):
+    xs, ys = [], []
+    with path.open("r") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            xs.append(m2dt(row["month"]))
+            ys.append(float(row["avg_hours"]))
+    pairs = sorted(zip(xs, ys))
+    return {"x": [p[0] for p in pairs], "avg_hours": [p[1] for p in pairs]}
 
-# Prepare data
-def make_source(zip1, zip2):
-    y_all = [avg_times["ALL"].get(m, 0) for m in months]
-    y1 = [avg_times.get(zip1, {}).get(m, 0) for m in months]
-    y2 = [avg_times.get(zip2, {}).get(m, 0) for m in months]
-    return ColumnDataSource(data={"month": months, "ALL": y_all, "ZIP1": y1, "ZIP2": y2})
+# Load per-zip data
+def load_zip(path):
+    by_zip = {}
+    with path.open("r") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            z = row["zipcode"]
+            d = by_zip.setdefault(z, {"x": [], "avg_hours": []})
+            d["x"].append(m2dt(row["month"]))
+            d["avg_hours"].append(float(row["avg_hours"]))
+    # Sort each zip by month
+    for z, d in by_zip.items():
+        pairs = sorted(zip(d["x"], d["avg_hours"]))
+        d["x"] = [p[0] for p in pairs]
+        d["avg_hours"] = [p[1] for p in pairs]
+    return by_zip, sorted(by_zip.keys())
 
-source = make_source(zip1, zip2)
+all_data = load_all(ALL_PATH)
+zip_data, zip_options = load_zip(ZIP_PATH)
 
-# Create figure
-p = figure(x_range=months, height=400, width=800, title="Monthly Avg Response Time (Hours)")
-p.line(x='month', y='ALL', source=source, color="black", legend_label="ALL")
-p.line(x='month', y='ZIP1', source=source, color="blue", legend_label="Zipcode 1")
-p.line(x='month', y='ZIP2', source=source, color="red", legend_label="Zipcode 2")
+z1_default = zip_options[0]
+z2_default = zip_options[1]
+
+all_src = ColumnDataSource(all_data)
+z1_src = ColumnDataSource(zip_data[z1_default])
+z2_src = ColumnDataSource(zip_data[z2_default])
+
+z1_sel = Select(title="Zipcode 1", value=z1_default, options=zip_options)
+z2_sel = Select(title="Zipcode 2", value=z2_default, options=zip_options)
+
+# Plot
+p = figure(width=1000, height=500, x_axis_type="datetime", title="NYC 311 Monthly Response Time in Hours (2024)")
 p.xaxis.axis_label = "Month"
-p.yaxis.axis_label = "Avg Response Time (Hours)"
-p.legend.location = "top_left"
+p.yaxis.axis_label = "Average Response Time (Hours)"
 
-# Dropdowns for zipcodes
-zipcodes = [z for z in avg_times.keys() if z != "ALL"]
-select1 = Select(title="Zipcode 1", value=zip1, options=zipcodes)
-select2 = Select(title="Zipcode 2", value=zip2, options=zipcodes)
+l_all = p.line(source=all_src, x="x", y="avg_hours", line_width=2, color="black")
+l_z1  = p.line(source=z1_src,  x="x", y="avg_hours", line_width=2, color="royalblue")
+l_z2  = p.line(source=z2_src,  x="x", y="avg_hours", line_width=2, color="firebrick")
+
+legend = Legend(items=[
+    LegendItem(label=value("ALL 2024"), renderers=[l_all]),
+    LegendItem(label=value(f"Zip {z1_default}"), renderers=[l_z1]),
+    LegendItem(label=value(f"Zip {z2_default}"), renderers=[l_z2]),
+])
+legend.click_policy = "hide"
+p.add_layout(legend, "right")
 
 # Callback
-def update(attr, old, new):
-    new_source = make_source(select1.value, select2.value)
-    source.data.update(new_source.data)
+def on_change(_attr, _old, _new):
+    z1 = z1_sel.value
+    z2 = z2_sel.value
+    z1_src.data = zip_data.get(z1, {"x": [], "avg_hours": []})
+    z2_src.data = zip_data.get(z2, {"x": [], "avg_hours": []})
+    legend.items[1].label = value(f"Zip {z1}")
+    legend.items[2].label = value(f"Zip {z2}")
 
-select1.on_change("value", update)
-select2.on_change("value", update)
+z1_sel.on_change("value", on_change)
+z2_sel.on_change("value", on_change)
 
-# Layout
-layout = column(select1, select2, p)
-curdoc().add_root(layout)
-curdoc().title = "311 Response Time Dashboard"
+curdoc().add_root(column(z1_sel, z2_sel, p))
+curdoc().title = "NYC 311 Dashboard (2024)"
