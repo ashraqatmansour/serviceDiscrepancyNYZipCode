@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from pathlib import Path
 from bokeh.io import curdoc
 from bokeh.layouts import column
