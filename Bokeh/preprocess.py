@@ -1,44 +1,73 @@
 import csv
-from collections import defaultdict
 from datetime import datetime
-import pickle  # to save processed data
 
-# Dictionary: {zipcode: {month: [response_times]}}
-response_times = defaultdict(lambda: defaultdict(list))
-all_response_times = defaultdict(list)
+CREATED_COL = "Created Date"
+CLOSED_COL  = "Closed Date"
+ZIP_COL     = "Incident Zip"
 
-with open("../data/cleaned.csv") as f:
-    reader = csv.DictReader(f)
-    for row in reader:
+def parse_dt(s):
+    if not s:
+        return None
+    for fmt in ("%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            created = datetime.strptime(row["Created Date"], "%m/%d/%Y %I:%M:%S %p")
-            closed = datetime.strptime(row["Closed Date"], "%m/%d/%Y %I:%M:%S %p")
-   
-        except:
-            continue  # skip rows with bad dates
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
 
-        if closed < created:
-            continue  # skip negative response times
+def month_key(dt):
+    return f"{dt.year:04d}-{dt.month:02d}"
 
-        zipcode = row["Incident Zip"]
-        if not zipcode:
-            continue  # skip missing zipcodes
+def main():
+    in_path = "../data/311_Service.csv"  
+    out_zip = "monthly_zip_averages.csv"
+    out_all = "monthly_all_averages.csv"
 
-        # Response time in hours
-        hours = (closed - created).total_seconds() / 3600
-        month = closed.strftime("%Y-%m")  # e.g., "2024-01"
+    by_zip = {}
+    by_all = {}
 
-        response_times[zipcode][month].append(hours)
-        all_response_times[month].append(hours)
+    with open(in_path, "r", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            z = (row.get(ZIP_COL) or "").strip()
+            if not z:
+                continue
 
-# Compute averages
-avg_times = defaultdict(dict)
-for zipc, months in response_times.items():
-    for month, times in months.items():
-        avg_times[zipc][month] = sum(times) / len(times)
+            cr = parse_dt(row.get(CREATED_COL))
+            cl = parse_dt(row.get(CLOSED_COL))
+            if not cr or not cl:
+                continue
 
-avg_times["ALL"] = {month: sum(times)/len(times) for month, times in all_response_times.items()}
+            # --- filter only 2024 ---
+            if cl.year != 2024:
+                continue
 
-# Save preprocessed data
-with open("monthly_avg.pkl", "wb") as f:
-    pickle.dump(avg_times, f)
+            hrs = (cl - cr).total_seconds() / 3600.0
+            if hrs < 0:
+                continue
+
+            m = month_key(cl)
+            by_zip.setdefault((m, z), [0.0, 0])
+            by_zip[(m, z)][0] += hrs
+            by_zip[(m, z)][1] += 1
+
+            by_all.setdefault(m, [0.0, 0])
+            by_all[m][0] += hrs
+            by_all[m][1] += 1
+
+    # Write per-zip CSV
+    with open(out_zip, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["month", "zipcode", "avg_hours"])
+        for (m, z), (s, n) in sorted(by_zip.items()):
+            w.writerow([m, z, round(s / n, 2)])
+
+    # Write overall CSV
+    with open(out_all, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["month", "avg_hours"])
+        for m, (s, n) in sorted(by_all.items()):
+            w.writerow([m, round(s / n, 2)])
+
+if __name__ == "__main__":
+    main()
