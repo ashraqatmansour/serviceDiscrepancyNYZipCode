@@ -6,7 +6,9 @@ from collections import defaultdict
 
 def main():
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Count complaints for each type and each borough within a date range."
+    )
     parser.add_argument("-i", "--input_file", type=str, required=True, help="We need a set of data in a file.")
     parser.add_argument("-s", "--start_date", type=str,required=True, help="start date")
     parser.add_argument("-e","--end_date", type=str,required=True, help="end date")
@@ -24,12 +26,14 @@ def main():
         reader = csv.DictReader(f)
         for row in reader: 
             c_date = datetime.strptime(row["Created Date"].split()[0], "%m/%d/%Y")
+            
+            # some of the data may have missing or mistyped end dates. We will not consider these
             if s_date <= c_date <= e_date:
                     key = (row["Complaint Type"], row["Borough"])
                     counts[key] += 1
     
     
-    output_lines = ["complaint type,borough,count"]
+    output_lines = ["complaint type, borough,count"]
     for (complaint, borough), count in sorted(counts.items()):
         output_lines.append(f"{complaint},{borough},{count}")
 
@@ -41,8 +45,6 @@ def main():
         print("\n".join(output_lines))
 
     return
-
-
 
 
 if __name__ == "__main__":
